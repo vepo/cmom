@@ -29,6 +29,7 @@ Makefile.in
 *.so.*
 .libs/
 .deps/
+build-aux/
 
 # Backup and editor files
 *~
