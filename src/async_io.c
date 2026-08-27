@@ -1,0 +1,100 @@
+#include <sys/epoll.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <fcntl.h>
+#include <stddef.h>
+#include <unistd.h>
+#include <stdio.h>
+
+#include "async_io.h"
+#include "coroutines.h"
+#include "event_watch.h"
+
+/**
+ * Internal function. Implements async I/O read-write loop.
+ */
+void _async_io_read_write_loop(connection_context_t *conn)
+{
+    bool running = true;
+    while (running)
+    {
+        // 1. All read/write are async, so read never blocks.
+        //    If not data is available, it should return 0, EWOULDBLOCK or EAGAIN
+        ssize_t bytes_read;
+        while ((bytes_read = read(conn->socket, conn->buffer, sizeof(conn->buffer))) < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                // 2. Socket is not ready to read. Add the socket to I/O event watcher
+                //    and leave the execution process to broker
+                event_watch_io_wait_read(&conn->broker->event_watch, conn->socket);
+                coroutines_leave_connection(conn);
+            }
+            else
+            {
+                // 3. Some other error. Close the socket!
+                perror("read");
+                running = false;
+                break;
+            }
+        }
+
+        if (bytes_read == 0)
+        {
+            // 4. Connection closed! Close the socket!
+            running = false; 
+        }
+
+        if (running)
+        {
+            // 5. All read/write are async. The write will not block
+            printf("Data Received: %.*s\n", (int)bytes_read, conn->buffer);
+            size_t bytes_written_committed = 0;
+            while (bytes_written_committed < bytes_read)
+            {
+                ssize_t bytes_written = write(conn->socket, conn->buffer + bytes_written_committed, bytes_read - bytes_written_committed);
+                if (bytes_written < 0)
+                {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    {
+                        // 6. Socket is not available for now. Leave the contexts to main broker.
+                        //    And wait for read events. 
+                        event_watch_io_wait_write(&conn->broker->event_watch, conn->socket);
+                        coroutines_leave_connection(conn);
+                    }
+                    else
+                    {
+                        // 7. Some other error. Close the socket!
+                        perror("write");
+                        running = false;
+                        break;
+                    }
+                }
+                else
+                {
+                    // 8. Write was a successful operation. Commit the bytes and loop again to check if any
+                    //    bytes were missing to flush.
+                    bytes_written_committed += bytes_written;
+                }
+            }
+        }
+
+        // 9. Write done! Wait for read be ready!
+        event_watch_io_wait_read(&conn->broker->event_watch, conn->socket);
+    }
+
+    // 10. Connection closed. Cleanup event watcher and close socket.
+    event_watch_io_unsubscribe(&conn->broker->event_watch, conn->socket);
+    close(conn->socket);
+    conn->socket = -1; // tell main that this coroutine is done
+}
+
+connection_context_t *async_io_init(broker_context_t *broker, int socket)
+{
+    return coroutines_schedule(socket, broker, (void *)_async_io_read_write_loop);
+}
+
+void async_io_enable(int fd)
+{
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+}

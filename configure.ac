@@ -1,6 +1,7 @@
 AC_INIT([myproject], [1.0], [you@example.com])
 AC_CONFIG_SRCDIR([src/cmom.c])
 AC_CONFIG_HEADERS([config.h])
+AC_CHECK_HEADERS([ucontext.h])
 
 # Use auxiliary files in a 'build-aux' directory (optional but tidy)
 AC_CONFIG_AUX_DIR([build-aux])
