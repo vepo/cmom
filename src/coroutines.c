@@ -1,9 +1,12 @@
 #include "coroutines.h"
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "protocols/protocol.h"
 
 connection_context_t *coroutines_schedule(int socket, broker_context_t *broker, void *process_connection_fn)
 {
@@ -15,6 +18,7 @@ connection_context_t *coroutines_schedule(int socket, broker_context_t *broker, 
 
     conn->socket = socket;
     conn->broker = broker;
+    protocols_initialize(broker->protocol, &conn->protocol);    
 
     char *stack = malloc(STACK_SIZE);
     if (!stack)

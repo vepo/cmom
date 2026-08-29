@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <signal.h>
 
+#include "logger.h"
 #include "event_watch.h"
 #include "transport.h"
 #include "coroutines.h"
@@ -13,18 +14,11 @@
 
 volatile sig_atomic_t running = 1;
 transport_t transport;
-broker_context_t broker = {.connections = {NULL}};
+broker_context_t broker = { .connections = {NULL},
+                            .protocol = STOMP
+                          };
 
-/**
- * @brief Signal handler for SIGINT (Ctrl+C).
- *
- * Sets the global `running` flag to 0 and closes all client sockets and the
- * listening socket. This triggers the main loop to exit cleanly.
- *
- * @param signal Signal number (unused).
- */
-void close_broker(int signal) {
-    printf("Interrupt signal received! Closing broker...");
+void broker_cleanup(void) {
     running = 0;
     if (broker.connections) {
         for (int conn_idx = 0; conn_idx < MAX_CONNECTIONS; ++conn_idx) {
@@ -37,6 +31,21 @@ void close_broker(int signal) {
     if (transport.socket) {
         close(transport.socket);
     }
+    LOGGER_CLEANUP();
+
+}
+
+/**
+ * @brief Signal handler for SIGINT (Ctrl+C).
+ *
+ * Sets the global `running` flag to 0 and closes all client sockets and the
+ * listening socket. This triggers the main loop to exit cleanly.
+ *
+ * @param signal Signal number (unused).
+ */
+void broker_cleanup_signal(int signal) {
+    LOG_INFO("Interrupt signal received! Closing broker... singal=%d", signal);
+    broker_cleanup();
 }
 
 /**
@@ -51,13 +60,17 @@ void close_broker(int signal) {
  */
 int main(void)
 {
+    LOGGER_INIT();   // must be called before any LOG_* macro
+    LOG_INFO("Broker starting up...");
     // 1. Initialize the transport layer. Create the server and 
     //    start listening to new connections
     int listen_port = 8080;
     transport_init(listen_port, 128, &transport);
     // 2. Setup signal handler to graceful shutdown. 
     //    Watch CTRL+C signal
-    signal(SIGINT, close_broker);
+    atexit(broker_cleanup);
+    signal(SIGINT, broker_cleanup_signal);
+    signal(SIGTERM, broker_cleanup_signal);
 
     // 3. Initialize event watcher and subscribe for transport layer events
     event_watch_init(&broker.event_watch);
@@ -68,7 +81,7 @@ int main(void)
     // DOC: https://man7.org/linux/man-pages/man2/getcontext.2.html
     getcontext(&broker.context);
 
-    printf("Broker started at %d\n", listen_port);
+    LOG_DEBUG("Listening on port %d", listen_port);
 
     // 7. Event loop that looks for I/O events. It should always back to this event loop
     //    if there is read/write block.
@@ -126,7 +139,7 @@ int main(void)
                     free(conn->context.uc_stack.ss_sp);
                     free(conn);
                     broker.connections[event_fd] = NULL;
-                    printf("Connection %d removed\n", event_fd);
+                    LOG_DEBUG("Connection %d removed", event_fd);
                 }
             }
         }

@@ -3,10 +3,10 @@
 
 #include <ucontext.h>
 #include "event_watch.h"
+#include "protocols/protocol.h"
 
 #define STACK_SIZE      (64 * 1024)
 #define MAX_CONNECTIONS 4096
-#define BUFFER_SIZE     4096
 
 typedef struct broker_context broker_context_t;
 
@@ -17,7 +17,7 @@ typedef struct connection_context {
     ucontext_t context;         /**< Coroutine execution context. */
     broker_context_t *broker;   /**< Pointer to the broker that owns this connection. */
     int socket;                 /**< Client socket file descriptor. */
-    char buffer[BUFFER_SIZE];   /**< I/O buffer for read/write operations. */
+    protocol_buffer_t protocol;
 } connection_context_t;
 
 /**
@@ -27,6 +27,7 @@ typedef struct broker_context {
     ucontext_t context;                                 /**< Main coroutine context (event loop). */
     connection_context_t *connections[MAX_CONNECTIONS]; /**< Map fd -> connection_context. */
     event_watch_t event_watch;                          /**< epoll instance and event array. */
+    protocol_e protocol;
 } broker_context_t;
 
 /**

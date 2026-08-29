@@ -27,6 +27,7 @@ Makefile.in
 *.a
 *.so
 *.so.*
+.dirstamp
 .libs/
 .deps/
 build-aux/
