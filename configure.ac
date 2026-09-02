@@ -1,6 +1,6 @@
 AC_INIT([cmom], [1.0], [victor.perticarrari@gmail.com])
-AC_CONFIG_SRCDIR([src/cmom.c])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_SRCDIR([src/main/broker.c])
+AC_CONFIG_HEADERS([includes/config.h])
 AC_CONFIG_AUX_DIR([build-aux])
 
 # Enable subdir-objects in automake
@@ -46,6 +46,6 @@ fi
 
 # Output files
 AC_CONFIG_FILES([Makefile
-                 src/Makefile
-                 tests/Makefile])
+                 src/main/Makefile
+                 src/test/Makefile])
 AC_OUTPUT
