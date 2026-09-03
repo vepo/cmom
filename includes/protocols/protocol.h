@@ -25,7 +25,7 @@ typedef struct protocol_message
 {
     char command[64];
     protocol_header_t *headers;
-    char *body;
+    unsigned char *body;
     size_t body_len;
     size_t body_received;
     bool ready;
@@ -34,9 +34,9 @@ typedef struct protocol_message
 
 typedef struct protocol_buffer
 {
-    char buffer[BUFFER_SIZE]; /**< I/O buffer for read/write operations. */
-    int start;                /** Start of read buffer */
-    int end;                  /** End of read buffer */
+    unsigned char buffer[BUFFER_SIZE]; /**< I/O buffer for read/write operations. */
+    int start;                         /** Start of read buffer */
+    int end;                           /** End of read buffer */
     protocol_message_t *messages;
     size_t processing_stage;
 } protocol_buffer_t;

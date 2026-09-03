@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-protocol_message_t *protocols_stomp_message_initialize()
+protocol_message_t *_protocols_stomp_message_initialize()
 {
     protocol_message_t *message = malloc(sizeof(protocol_message_t));
     message->command[0] = '\0';
@@ -57,12 +57,14 @@ static void add_header(protocol_message_t *msg, const char *key, const char *val
     {
         protocol_header_t *last = msg->headers;
         while (last->next_header)
+        {
             last = last->next_header;
+        }
         last->next_header = new_hdr;
     }
 }
 
-int protocols_stopm_find_body_end(char *buffer, size_t length)
+int protocols_stomp_find_body_end(char *buffer, size_t length)
 {
     LOG_DEBUG("Trying to find buffer end!");
     for (size_t pos = 0; pos < length; ++pos)
@@ -75,6 +77,297 @@ int protocols_stopm_find_body_end(char *buffer, size_t length)
     return -1;
 }
 
+bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+{
+    LOG_DEBUG("Processing STOMP command...");
+    protocol_message_t *current = *current_ptr;
+
+    // No data available yet
+    if (buffer->start >= buffer->end)
+    {
+        LOG_DEBUG("Buffer empty, waiting for more data");
+        return true; // need more data
+    }
+
+    unsigned char *data_start = buffer->buffer + buffer->start;
+    size_t available = buffer->end - buffer->start;
+
+    // Search for newline within available data (safe even without null terminator)
+    unsigned char *command_end_ptr = memchr(data_start, '\n', available);
+    bool command_done = (command_end_ptr != NULL);
+
+    if (!command_done)
+    {
+        // No newline yet – copy all available data as partial command
+        size_t current_len = strlen(current->command);
+        // Ensure we don't overflow the command buffer
+        if (current_len + available >= sizeof(current->command))
+        {
+            LOG_ERROR("Command too long (partial)!");
+            return false;
+        }
+        memcpy(current->command + current_len, data_start, available);
+        current->command[current_len + available] = '\0';
+        // Consume all data; we'll wait for more
+        buffer->start = buffer->end;
+        LOG_DEBUG("Command partial, appended %zu bytes, waiting for more", available);
+        return true; // need more data
+    }
+
+    // Found a newline – complete the command line
+    size_t cmd_length = command_end_ptr - data_start; // length excluding newline
+    size_t current_len = strlen(current->command);
+
+    // Check overflow (including null terminator)
+    if (current_len + cmd_length >= sizeof(current->command))
+    {
+        LOG_ERROR("Command too long (complete)!");
+        return false;
+    }
+
+    // Append the command part (excluding newline)
+    memcpy(current->command + current_len, data_start, cmd_length);
+    current->command[current_len + cmd_length] = '\0';
+
+    // Strip trailing carriage return if present
+    strip_cr(current->command);
+
+    // Advance buffer start past the newline
+    buffer->start = (command_end_ptr - buffer->buffer) + 1;
+
+    // Move to headers processing stage
+    buffer->processing_stage = STOMP_PROCESSING_STATE_HEADERS;
+
+    LOG_DEBUG("Command complete: \"%s\"", current->command);
+    return true; // success (command parsed)
+}
+
+bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+{
+    LOG_DEBUG("Processing STOMP headers...");
+    protocol_message_t *current = *current_ptr;
+
+    // No data? Wait.
+    if (buffer->start >= buffer->end)
+    {
+        LOG_DEBUG("Buffer empty, waiting for more data");
+        return true;
+    }
+
+    unsigned char *line_start = buffer->buffer + buffer->start;
+    size_t avail = buffer->end - buffer->start;
+
+    // Search for newline within available bytes
+    unsigned char *newline = memchr(line_start, '\n', avail);
+    if (!newline)
+    {
+        // Incomplete header line – keep data and wait
+        LOG_DEBUG("Header line incomplete, waiting for more data");
+        return true;
+    }
+
+    // Line length excludes the newline
+    size_t line_len = newline - line_start;
+    bool empty_line = (line_len == 0) || (line_len == 1 && line_start[0] == '\r');
+
+    if (empty_line)
+    {
+        // End of headers – move to body
+        buffer->start = (newline - buffer->buffer) + 1;
+        buffer->processing_stage = STOMP_PROCESSING_STATE_BODY;
+        LOG_DEBUG("Headers done, moving to body");
+        return true;
+    }
+
+    // Find colon within this line only
+    unsigned char *colon = memchr(line_start, ':', line_len);
+    if (!colon)
+    {
+        LOG_ERROR("Invalid header line (missing colon): %.*s", (int)line_len, line_start);
+        return false;
+    }
+
+    // Extract key (before colon)
+    size_t key_len = colon - line_start;
+    if (key_len >= sizeof(current->command))
+    { // reuse command size or define HEADER_KEY_MAX
+        LOG_ERROR("Header key too long");
+        return false;
+    }
+    char key[256];
+    memcpy(key, line_start, key_len);
+    key[key_len] = '\0';
+    trim_whitespace(key);
+
+    // Extract value (after colon, until newline)
+    size_t value_len = newline - (colon + 1);
+    if (value_len >= 1024)
+    { // or a constant
+        LOG_ERROR("Header value too long");
+        return false;
+    }
+    char value[1024];
+    memcpy(value, colon + 1, value_len);
+    value[value_len] = '\0';
+    trim_whitespace(value);
+
+    // Add header to message
+    add_header(current, key, value);
+    LOG_DEBUG("Header: \"%s\"=\"%s\"", key, value);
+
+    // Advance start past the newline
+    buffer->start = (newline - buffer->buffer) + 1;
+
+    return true; // <-- FIX: explicit return
+}
+
+bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+{
+    LOG_DEBUG("Processing STOMP body...");
+    protocol_message_t *current = *current_ptr;
+
+    // Find Content-Length header
+    size_t expected_len = 0;
+    bool has_content_length = false;
+    protocol_header_t *hdr = current->headers;
+    while (hdr)
+    {
+        if (strcmp(hdr->key, "content-length") == 0)
+        {
+            expected_len = atoi(hdr->value);
+            has_content_length = true;
+            LOG_DEBUG("Message has content-length: %zu", expected_len);
+            break;
+        }
+        hdr = hdr->next_header;
+    }
+
+    if (has_content_length)
+    {
+        // ---------- Content-Length mode ----------
+        size_t remaining = expected_len - current->body_received;
+        size_t available = buffer->end - buffer->start;
+        size_t to_copy = (remaining < available) ? remaining : available;
+
+        if (to_copy > 0)
+        {
+            // Reallocate body
+            char *new_body = realloc(current->body, current->body_received + to_copy + 1);
+            if (!new_body)
+            {
+                LOG_ERROR("Body realloc failed");
+                return false;
+            }
+            current->body = new_body;
+            memcpy(current->body + current->body_received,
+                   buffer->buffer + buffer->start, to_copy);
+            current->body_received += to_copy;
+            buffer->start += to_copy;
+        }
+
+        if (current->body_received == expected_len)
+        {
+            // Body complete
+            current->body[current->body_received] = '\0';
+            current->body_len = current->body_received;
+            current->ready = true;
+            LOG_DEBUG("Body complete (Content-Length), length=%zu", current->body_len);
+
+            // Prepare next frame
+            buffer->messages->next_message = _protocols_stomp_message_initialize();
+            *current_ptr = buffer->messages->next_message;
+            buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
+            return true;
+        }
+        else
+        {
+            // Need more data
+            LOG_DEBUG("Body partial: %zu/%zu bytes", current->body_received, expected_len);
+            return true; // not an error
+        }
+    }
+    else
+    {
+        // ---------- Null-terminated mode ----------
+        size_t avail = buffer->end - buffer->start;
+        if (avail == 0)
+        {
+            LOG_DEBUG("No body data available, waiting");
+            return true;
+        }
+
+        char *data = buffer->buffer + buffer->start;
+        int null_offset = protocols_stomp_find_body_end(data, avail); // returns offset or -1
+
+        if (null_offset == -1)
+        {
+            // No null found – copy everything and wait for more
+            if (avail > 0)
+            {
+                char *new_body = realloc(current->body, current->body_received + avail + 1);
+                if (!new_body)
+                {
+                    LOG_ERROR("Body realloc failed");
+                    return false;
+                }
+                current->body = new_body;
+                memcpy(current->body + current->body_received, data, avail);
+                current->body_received += avail;
+                current->body_len = current->body_received; // not final yet
+                buffer->start = buffer->end;                // consume all
+            }
+            LOG_DEBUG("Body partial (no null), waiting for more");
+            return true;
+        }
+
+        // Null found at offset null_offset
+        size_t body_part_len = null_offset; // bytes before the null
+        if (body_part_len > 0)
+        {
+            char *new_body = realloc(current->body, current->body_received + body_part_len + 1);
+            if (!new_body)
+            {
+                LOG_ERROR("Body realloc failed");
+                return false;
+            }
+            current->body = new_body;
+            memcpy(current->body + current->body_received, data, body_part_len);
+            current->body_received += body_part_len;
+        }
+        // Now we have the complete body (null terminator not part of body)
+        if (current->body != NULL)
+        {
+            current->body[current->body_received] = '\0';
+        }
+        current->body_len = current->body_received;
+        current->ready = true;
+        LOG_DEBUG("Body complete (null-terminated), length=%zu", current->body_len);
+
+        // Advance buffer start past the null byte (and any trailing \r or \n)
+        size_t consume = null_offset + 1; // skip the null
+        buffer->start += consume;
+        // Optional: skip one CR or LF if present (common after null)
+        if (buffer->start < buffer->end &&
+            (buffer->buffer[buffer->start] == '\r' || buffer->buffer[buffer->start] == '\n'))
+        {
+            buffer->start++;
+            // If CRLF, skip LF as well
+            if (buffer->start < buffer->end &&
+                buffer->buffer[buffer->start - 1] == '\r' &&
+                buffer->buffer[buffer->start] == '\n')
+            {
+                buffer->start++;
+            }
+        }
+
+        // Prepare next frame
+        current->next_message = _protocols_stomp_message_initialize();
+        *current_ptr = current->next_message;
+        buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
+        return true;
+    }
+}
+
 bool protocols_stomp_process(protocol_buffer_t *buffer)
 {
     LOG_DEBUG("Processing STOMP buffer...");
@@ -82,7 +375,7 @@ bool protocols_stomp_process(protocol_buffer_t *buffer)
     // Ensure there is at least one message object
     if (buffer->messages == NULL)
     {
-        buffer->messages = protocols_stomp_message_initialize();
+        buffer->messages = _protocols_stomp_message_initialize();
     }
 
     protocol_message_t *current = buffer->messages;
@@ -100,212 +393,14 @@ bool protocols_stomp_process(protocol_buffer_t *buffer)
         switch (buffer->processing_stage)
         {
         case STOMP_PROCESSING_STATE_COMMAND:
-        {
-            LOG_DEBUG("Processing STOMP command...");
-            char *command_end_ptr = strchr(reading, '\n');
-            bool command_done = (command_end_ptr != NULL);
-
-            if (!command_done)
-            {
-                // No newline yet – wait for more data
-                LOG_DEBUG("Command incomplete, waiting for more data");
-                return true; // need more data
-            }
-
-            size_t cmd_length = command_end_ptr - reading;
-            size_t current_command_size = strlen(current->command);
-
-            // Check overflow
-            if (cmd_length + current_command_size >= sizeof(current->command))
-            {
-                LOG_ERROR("Command too long!");
-                return false;
-            }
-
-            // Append the new chunk (including the newline? We'll copy without the newline)
-            memcpy(current->command + current_command_size, reading, cmd_length);
-            current->command[current_command_size + cmd_length] = '\0';
-
-            // Strip trailing \r if present
-            strip_cr(current->command);
-
-            // Advance start past the newline
-            buffer->start = (command_end_ptr - buffer->buffer) + 1;
-
-            // Move to headers stage
-            buffer->processing_stage = STOMP_PROCESSING_STATE_HEADERS;
-            LOG_DEBUG("Command done: \"%s\"", current->command);
+            _protocols_stomp_process_command(buffer, &current);
             break;
-        }
-
         case STOMP_PROCESSING_STATE_HEADERS:
-        {
-            LOG_DEBUG("Processing STOMP headers...");
-            char *line_start = buffer->buffer + buffer->start;
-            char *newline = strchr(line_start, '\n');
-
-            if (!newline)
-            {
-                // Incomplete header line – keep data and wait
-                LOG_DEBUG("Header line incomplete, waiting for more data");
-                return true;
-            }
-
-            // Compute line length (excluding newline)
-            size_t line_len = newline - line_start;
-            bool empty_line = (line_len == 0) || (line_len == 1 && line_start[0] == '\r');
-
-            if (empty_line)
-            {
-                // End of headers – move to body
-                buffer->start = (newline - buffer->buffer) + 1;
-                buffer->processing_stage = STOMP_PROCESSING_STATE_BODY;
-                LOG_DEBUG("Headers done, moving to body");
-                break;
-            }
-
-            // We have a header line: key:value (with possible spaces)
-            char *colon = strchr(line_start, ':');
-            if (!colon)
-            {
-                LOG_ERROR("Invalid header line (missing colon): %.*s", (int)line_len, line_start);
-                return false;
-            }
-
-            // Extract key (before colon)
-            size_t key_len = colon - line_start;
-            char key[256];
-            if (key_len >= sizeof(key))
-            {
-                LOG_ERROR("Header key too long");
-                return false;
-            }
-            memcpy(key, line_start, key_len);
-            key[key_len] = '\0';
-            trim_whitespace(key);
-
-            // Extract value (after colon, until newline)
-            size_t value_len = newline - (colon + 1);
-            char value[1024]; // STOMP values can be long; adjust as needed
-            if (value_len >= sizeof(value))
-            {
-                LOG_ERROR("Header value too long");
-                return false;
-            }
-            memcpy(value, colon + 1, value_len);
-            value[value_len] = '\0';
-            trim_whitespace(value);
-
-            // Add header to the current message
-            add_header(current, key, value);
-            LOG_DEBUG("Header: \"%s\"=\"%s\"", key, value);
-
-            // Advance start past the newline
-            buffer->start = (newline - buffer->buffer) + 1;
+            _protocols_stomp_process_headers(buffer, &current);
             break;
-        }
-
         case STOMP_PROCESSING_STATE_BODY:
-        {
-            LOG_DEBUG("Processing STOMP body...");
-            // Find Content-Length header
-            size_t expected_len = 0;
-            bool has_content_length = false;
-            protocol_header_t *hdr = current->headers;
-            while (hdr)
-            {
-                if (strcmp(hdr->key, "content-length") == 0)
-                {
-                    expected_len = atoi(hdr->value);
-                    has_content_length = true;
-                    LOG_DEBUG("Message has content-length! size=%d", (int)expected_len);
-                    break;
-                }
-                hdr = hdr->next_header;
-            }
-
-            if (!has_content_length)
-            {
-                LOG_DEBUG("Processing body without content-length....");
-                // Null-terminated body
-                int null_pos = protocols_stopm_find_body_end(buffer->buffer + buffer->start, buffer->end - buffer->start);
-                LOG_DEBUG("NULL char position: %d", (int)null_pos);
-                if (null_pos != -1)
-                {
-                    // No null yet – copy all remaining data and wait for more
-                    size_t chunk = buffer->end - buffer->start;
-                    if (chunk > 0)
-                    {
-                        current->body = realloc(current->body, current->body_received + chunk + 1);
-                        if (!current->body)
-                        { /* handle error */
-                        }
-                        memcpy(current->body + current->body_received, buffer->buffer + buffer->start, chunk);
-                        current->body_received += chunk;
-                        buffer->start = buffer->end; // all consumed
-                    }
-                    LOG_DEBUG("Body incomplete (no null), waiting for more");
-                    current->body_len = current->body_received - 1; // remove \0
-                    current->ready = true;                          // we found \0
-                    return true;
-                }
-                size_t body_part_len = buffer->end - buffer->start;
-                if (current->body != NULL)
-                {
-                    current->body = realloc(current->body, current->body_received + body_part_len + 1);
-                }
-                else
-                {
-                    current->body = malloc(sizeof(char) * (body_part_len + 1));
-                }
-                memcpy(current->body + current->body_received, buffer->buffer + buffer->start, body_part_len);
-                current->body[body_part_len] = '\0';
-                current->body_len += current->body_received += body_part_len;
-                buffer->buffer[0] = '\0';
-                buffer->start = 0;
-                buffer->end = 0;
-                current->ready = false;
-                LOG_DEBUG("Body complete (null-terminated), length=%zu", current->body_received);
-                break;
-            }
-            else
-            {
-                LOG_DEBUG("Processing body with content-length....");
-                // With Content-Length
-                size_t remaining = expected_len - current->body_received;
-                size_t available = buffer->end - buffer->start;
-                size_t to_copy = (remaining < available) ? remaining : available;
-
-                if (to_copy > 0)
-                {
-                    current->body = realloc(current->body, current->body_received + to_copy + 1);
-                    if (!current->body)
-                    { /* handle error */
-                    }
-                    memcpy(current->body + current->body_received,
-                           buffer->buffer + buffer->start, to_copy);
-                    current->body_received += to_copy;
-                    buffer->start += to_copy;
-                }
-
-                if (current->body_received == expected_len)
-                {
-                    current->body[current->body_received] = '\0';
-                    current->ready = true;
-                    LOG_DEBUG("Body complete (Content-Length), length=%zu", current->body_received);
-                    // Prepare next frame
-                    buffer->messages->next_message = protocols_stomp_message_initialize();
-                    buffer->messages = buffer->messages->next_message;
-                    buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
-                }
-                else
-                {
-                    LOG_DEBUG("Body partial: %zu/%zu bytes", current->body_received, expected_len);
-                    return true;
-                }
-                break;
-            }
-        }
+            _protocols_stomp_process_body(buffer, &current);
+            break;
 
         default:
             LOG_ERROR("Unknown processing stage");
@@ -313,6 +408,12 @@ bool protocols_stomp_process(protocol_buffer_t *buffer)
         }
     }
 
+    if (buffer->start == buffer->end)
+    {
+        buffer->start = 0;
+        buffer->end = 0;
+        buffer->buffer[0] = '\0';
+    }
     // No more data to process in this buffer
     return true;
 }
