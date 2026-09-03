@@ -25,9 +25,9 @@ typedef struct protocol_message
 {
     char command[64];
     protocol_header_t *headers;
-    char *body;           // dynamically allocated
-    size_t body_len;      // total length (not including null terminator)
-    size_t body_received; // how many bytes have been read so far
+    char *body;
+    size_t body_len;
+    size_t body_received;
     bool ready;
     protocol_message_t *next_message;
 } protocol_message_t;
