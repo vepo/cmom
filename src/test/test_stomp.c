@@ -2,7 +2,7 @@
 #include <CUnit/Basic.h>
 #include <stdio.h>
 
-#include "logger.h"
+#include "core/logger.h"
 #include "protocols/protocol.h"
 
 static void assert_message_equal(protocol_message_t *expected, protocol_message_t *actual)

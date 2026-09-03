@@ -1,5 +1,5 @@
 #include "protocols/stomp.h"
-#include "logger.h"
+#include "core/logger.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,7 +7,7 @@ protocol_message_t *_protocols_stomp_message_initialize()
 {
     protocol_message_t *message = malloc(sizeof(protocol_message_t));
     message->command[0] = '\0';
-    message->body[0] = '\0';
+    message->body = NULL;
     message->body_len = 0;
     message->body_received = 0;
     message->next_message = NULL;
@@ -77,7 +77,7 @@ int protocols_stomp_find_body_end(char *buffer, size_t length)
     return -1;
 }
 
-bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+void _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
 {
     LOG_DEBUG("Processing STOMP command...");
     protocol_message_t *current = *current_ptr;
@@ -86,7 +86,8 @@ bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_messag
     if (buffer->start >= buffer->end)
     {
         LOG_DEBUG("Buffer empty, waiting for more data");
-        return true; // need more data
+        buffer->corrupted = true;
+        return; // need more data
     }
 
     unsigned char *data_start = buffer->buffer + buffer->start;
@@ -104,14 +105,15 @@ bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_messag
         if (current_len + available >= sizeof(current->command))
         {
             LOG_ERROR("Command too long (partial)!");
-            return false;
+            buffer->corrupted = true;
+            return;
         }
         memcpy(current->command + current_len, data_start, available);
         current->command[current_len + available] = '\0';
         // Consume all data; we'll wait for more
         buffer->start = buffer->end;
         LOG_DEBUG("Command partial, appended %zu bytes, waiting for more", available);
-        return true; // need more data
+        return; // need more data
     }
 
     // Found a newline – complete the command line
@@ -122,7 +124,8 @@ bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_messag
     if (current_len + cmd_length >= sizeof(current->command))
     {
         LOG_ERROR("Command too long (complete)!");
-        return false;
+        buffer->corrupted = true;
+        return;
     }
 
     // Append the command part (excluding newline)
@@ -139,10 +142,10 @@ bool _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_messag
     buffer->processing_stage = STOMP_PROCESSING_STATE_HEADERS;
 
     LOG_DEBUG("Command complete: \"%s\"", current->command);
-    return true; // success (command parsed)
+    return; // success (command parsed)
 }
 
-bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+void _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
 {
     LOG_DEBUG("Processing STOMP headers...");
     protocol_message_t *current = *current_ptr;
@@ -151,7 +154,7 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     if (buffer->start >= buffer->end)
     {
         LOG_DEBUG("Buffer empty, waiting for more data");
-        return true;
+        return;
     }
 
     unsigned char *line_start = buffer->buffer + buffer->start;
@@ -163,7 +166,7 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     {
         // Incomplete header line – keep data and wait
         LOG_DEBUG("Header line incomplete, waiting for more data");
-        return true;
+        return;
     }
 
     // Line length excludes the newline
@@ -176,7 +179,7 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
         buffer->start = (newline - buffer->buffer) + 1;
         buffer->processing_stage = STOMP_PROCESSING_STATE_BODY;
         LOG_DEBUG("Headers done, moving to body");
-        return true;
+        return;
     }
 
     // Find colon within this line only
@@ -184,7 +187,8 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     if (!colon)
     {
         LOG_ERROR("Invalid header line (missing colon): %.*s", (int)line_len, line_start);
-        return false;
+        buffer->corrupted = true;
+        return;
     }
 
     // Extract key (before colon)
@@ -192,7 +196,8 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     if (key_len >= sizeof(current->command))
     { // reuse command size or define HEADER_KEY_MAX
         LOG_ERROR("Header key too long");
-        return false;
+        buffer->corrupted = true;
+        return;
     }
     char key[256];
     memcpy(key, line_start, key_len);
@@ -204,7 +209,8 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     if (value_len >= 1024)
     { // or a constant
         LOG_ERROR("Header value too long");
-        return false;
+        buffer->corrupted = true;
+        return;
     }
     char value[1024];
     memcpy(value, colon + 1, value_len);
@@ -218,10 +224,10 @@ bool _protocols_stomp_process_headers(protocol_buffer_t *buffer, protocol_messag
     // Advance start past the newline
     buffer->start = (newline - buffer->buffer) + 1;
 
-    return true; // <-- FIX: explicit return
+    return; // <-- FIX: explicit return
 }
 
-bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
+void _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t **current_ptr)
 {
     LOG_DEBUG("Processing STOMP body...");
     protocol_message_t *current = *current_ptr;
@@ -256,11 +262,11 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
             if (!new_body)
             {
                 LOG_ERROR("Body realloc failed");
-                return false;
+                buffer->corrupted = true;
+                return;
             }
             current->body = new_body;
-            memcpy(current->body + current->body_received,
-                   buffer->buffer + buffer->start, to_copy);
+            memcpy(current->body + current->body_received, buffer->buffer + buffer->start, to_copy);
             current->body_received += to_copy;
             buffer->start += to_copy;
         }
@@ -277,13 +283,13 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
             buffer->messages->next_message = _protocols_stomp_message_initialize();
             *current_ptr = buffer->messages->next_message;
             buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
-            return true;
+            return;
         }
         else
         {
             // Need more data
             LOG_DEBUG("Body partial: %zu/%zu bytes", current->body_received, expected_len);
-            return true; // not an error
+            return; // not an error
         }
     }
     else
@@ -293,12 +299,11 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
         if (avail == 0)
         {
             LOG_DEBUG("No body data available, waiting");
-            return true;
+            return;
         }
 
         char *data = buffer->buffer + buffer->start;
         int null_offset = protocols_stomp_find_body_end(data, avail); // returns offset or -1
-
         if (null_offset == -1)
         {
             // No null found – copy everything and wait for more
@@ -308,7 +313,8 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
                 if (!new_body)
                 {
                     LOG_ERROR("Body realloc failed");
-                    return false;
+                    buffer->corrupted = true;
+                    return;
                 }
                 current->body = new_body;
                 memcpy(current->body + current->body_received, data, avail);
@@ -317,21 +323,29 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
                 buffer->start = buffer->end;                // consume all
             }
             LOG_DEBUG("Body partial (no null), waiting for more");
-            return true;
+            return;
         }
 
         // Null found at offset null_offset
         size_t body_part_len = null_offset; // bytes before the null
         if (body_part_len > 0)
         {
-            char *new_body = realloc(current->body, current->body_received + body_part_len + 1);
+            char *new_body;
+            if (current->body == NULL)
+            {
+                new_body = malloc(sizeof(unsigned char *) * body_part_len + 1);
+            }
+            else
+            {
+                new_body = realloc(current->body, current->body_received + body_part_len + 1);
+            }
             if (!new_body)
             {
-                LOG_ERROR("Body realloc failed");
-                return false;
+                buffer->corrupted = true;
+                return;
             }
             current->body = new_body;
-            memcpy(current->body + current->body_received, data, body_part_len);
+            memcpy(current->body + current->body_received, data, body_part_len + 1);
             current->body_received += body_part_len;
         }
         // Now we have the complete body (null terminator not part of body)
@@ -364,11 +378,11 @@ bool _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
         current->next_message = _protocols_stomp_message_initialize();
         *current_ptr = current->next_message;
         buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
-        return true;
+        return;
     }
 }
 
-bool protocols_stomp_process(protocol_buffer_t *buffer)
+void protocols_stomp_process(protocol_buffer_t *buffer)
 {
     LOG_DEBUG("Processing STOMP buffer...");
 
@@ -385,7 +399,7 @@ bool protocols_stomp_process(protocol_buffer_t *buffer)
     }
 
     // Loop while there is unprocessed data
-    while (buffer->start < buffer->end)
+    while (buffer->start < buffer->end && !buffer->corrupted)
     {
         char *reading = buffer->buffer + buffer->start;
         size_t remaining = buffer->end - buffer->start;
@@ -401,21 +415,20 @@ bool protocols_stomp_process(protocol_buffer_t *buffer)
         case STOMP_PROCESSING_STATE_BODY:
             _protocols_stomp_process_body(buffer, &current);
             break;
-
         default:
             LOG_ERROR("Unknown processing stage");
-            return false;
+            buffer->corrupted = true;
+            return;
         }
     }
 
+    // No more data to process in this buffer
     if (buffer->start == buffer->end)
     {
         buffer->start = 0;
         buffer->end = 0;
         buffer->buffer[0] = '\0';
     }
-    // No more data to process in this buffer
-    return true;
 }
 
 void protocols_stomp_initialize(protocol_buffer_t *buffer)

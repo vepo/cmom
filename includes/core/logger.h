@@ -1,5 +1,5 @@
-#ifndef LOGGER_H
-#define LOGGER_H
+#ifndef CORE_LOGGER_H
+#define CORE_LOGGER_H
 #include <config.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,4 +77,4 @@
 
 #endif /* ENABLE_LOGGING */
 
-#endif /* LOGGER_H */
+#endif /* CORE_LOGGER_H */

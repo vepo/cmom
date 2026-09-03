@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <signal.h>
 
-#include "logger.h"
+#include "core/logger.h"
 #include "event_watch.h"
 #include "transport.h"
 #include "coroutines.h"

@@ -12,7 +12,7 @@ make clean > make.log 2> make.err.log
 make >> make.log 2>> make.err.log
 
 echo "Starting broker..."
-./src/main/cmom > broker.log 2> broker.err.log &
+./src/main/broker > broker.log 2> broker.err.log &
 BROKER_PID=$!
 echo "Broker PID: $BROKER_PID"
 

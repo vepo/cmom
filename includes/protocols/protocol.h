@@ -37,11 +37,12 @@ typedef struct protocol_buffer
     unsigned char buffer[BUFFER_SIZE]; /**< I/O buffer for read/write operations. */
     int start;                         /** Start of read buffer */
     int end;                           /** End of read buffer */
+    bool corrupted;
     protocol_message_t *messages;
     size_t processing_stage;
 } protocol_buffer_t;
 
 void protocols_initialize(protocol_e protocol, protocol_buffer_t *buffer);
-bool protocols_process(protocol_e protocol, protocol_buffer_t *buffer);
+void protocols_process(protocol_e protocol, protocol_buffer_t *buffer);
 
 #endif

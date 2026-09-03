@@ -1,10 +1,10 @@
 noinst_LIBRARIES = libbroker-core.a libbroker-protocols.a
 
-libbroker_core_a_SOURCES = coroutines.c \
+libbroker_core_a_SOURCES = core/logger.c \
+                           coroutines.c \
                            async_io.c \
                            transport.c \
-                           event_watch.c \
-                           logger_global.c
+                           event_watch.c
 libbroker_core_a_CFLAGS = -I$(top_srcdir)/includes $(LOG4C_CFLAGS) $(AM_CFLAGS)
 
 libbroker_protocols_a_SOURCES = protocols/protocol.c \
