@@ -24,7 +24,7 @@ void transport_init(int port, int max_connection_queue, transport_t *transport);
  * @brief Accept an incoming client connection.
  *
  * Calls accept(2) on the listening socket. The new socket is automatically
- * set to non‑blocking mode via async_io_enable().
+ * set to non‑blocking mode via network_io_async_enable().
  *
  * @param transport  The transport context.
  *

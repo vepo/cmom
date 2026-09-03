@@ -1,34 +1,37 @@
-#ifndef COROUTINES_H
-#define COROUTINES_H
+#ifndef SCHEDULER_TASKS_H
+#define SCHEDULER_TASKS_H
 
 #include <ucontext.h>
-#include "event_watch.h"
+#include "network/watcher.h"
 #include "protocols/protocol.h"
 
-#define STACK_SIZE      (64 * 1024)
+#define STACK_SIZE (64 * 1024)
 #define MAX_CONNECTIONS 4096
 
-typedef struct broker_context broker_context_t;
+typedef struct scheduler_broker_task scheduler_broker_task_t;
 
 /**
  * @brief Represents a single client connection with its coroutine context.
  */
-typedef struct connection_context {
-    ucontext_t context;         /**< Coroutine execution context. */
-    broker_context_t *broker;   /**< Pointer to the broker that owns this connection. */
-    int socket;                 /**< Client socket file descriptor. */
+typedef struct scheduler_connection_task
+{
+    ucontext_t context;              /**< Coroutine execution context. */
+    scheduler_broker_task_t *broker; /**< Pointer to the broker that owns this connection. */
+    int socket;                      /**< Client socket file descriptor. */
     protocol_buffer_t protocol;
-} connection_context_t;
+} scheduler_connection_task_t;
 
 /**
  * @brief Broker context holding the main coroutine context and all connections.
  */
-typedef struct broker_context {
-    ucontext_t context;                                 /**< Main coroutine context (event loop). */
-    connection_context_t *connections[MAX_CONNECTIONS]; /**< Map fd -> connection_context. */
-    event_watch_t event_watch;                          /**< epoll instance and event array. */
+typedef struct scheduler_broker_task
+{
+    ucontext_t context;                                        /**< Main coroutine context (event loop). */
+    scheduler_connection_task_t *connections[MAX_CONNECTIONS]; /**< Map fd -> connection_context. */
+    event_watch_t event_watch;                                 /**< epoll instance and event array. */
     protocol_e protocol;
-} broker_context_t;
+    volatile bool running;
+} scheduler_broker_task_t;
 
 /**
  * @brief Schedule a coroutine for a new connection.
@@ -42,8 +45,8 @@ typedef struct broker_context {
  *
  * @return Pointer to the new connection context, or NULL on failure.
  */
-connection_context_t *coroutines_schedule(int socket, broker_context_t *broker,
-                                          void *process_connection_fn);
+scheduler_connection_task_t *coroutines_schedule(int socket, scheduler_broker_task_t *broker,
+                                                 void *process_connection_fn);
 
 /**
  * @brief Switch from the main loop to a connection's coroutine.
@@ -54,7 +57,7 @@ connection_context_t *coroutines_schedule(int socket, broker_context_t *broker,
  *
  * @param connection The connection whose coroutine should be resumed.
  */
-void coroutines_join_connection(connection_context_t *connection);
+void coroutines_join_connection(scheduler_connection_task_t *connection);
 
 /**
  * @brief Yield from a coroutine back to the main broker loop.
@@ -64,6 +67,6 @@ void coroutines_join_connection(connection_context_t *connection);
  *
  * @param connection The connection that is yielding.
  */
-void coroutines_leave_connection(connection_context_t *connection);
+void coroutines_leave_connection(scheduler_connection_task_t *connection);
 
-#endif
+#endif /* SCHEDULER_TASKS_H */

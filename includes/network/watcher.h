@@ -1,5 +1,5 @@
-#ifndef EVENT_WATCH_H
-#define EVENT_WATCH_H
+#ifndef NETWORK_WATCHER_H
+#define NETWORK_WATCHER_H
 
 #include <sys/epoll.h>
 
@@ -80,4 +80,4 @@ int event_watch_io_wait_read(event_watch_t *event_watch, int socket);
  */
 int event_watch_io_wait_write(event_watch_t *event_watch, int socket);
 
-#endif
+#endif /* NETWORK_WATCHER_H */

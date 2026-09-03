@@ -4,48 +4,38 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
-#include <signal.h>
 
 #include "core/logger.h"
-#include "event_watch.h"
+#include "core/lifecycle.h"
+#include "network/watcher.h"
 #include "network/transport.h"
-#include "coroutines.h"
-#include "async_io.h"
+#include "network/io.h"
 
-volatile sig_atomic_t running = 1;
+#include "scheduler/tasks.h"
+
 transport_t transport;
-broker_context_t broker = { .connections = {NULL},
-                            .protocol = STOMP
-                          };
 
-void broker_cleanup(void) {
-    running = 0;
-    if (broker.connections) {
-        for (int conn_idx = 0; conn_idx < MAX_CONNECTIONS; ++conn_idx) {
-            if (broker.connections[conn_idx] && broker.connections[conn_idx]->socket) {
-                close(broker.connections[conn_idx]->socket);
-                broker.connections[conn_idx]->socket = -1;
+void broker_cleanup(void *args)
+{
+    LOG_DEBUG("Application shutdown. Closing broker....");
+    scheduler_broker_task_t *broker = (scheduler_broker_task_t *)args;
+    broker->running = false;
+    if (broker->connections)
+    {
+        for (int conn_idx = 0; conn_idx < MAX_CONNECTIONS; ++conn_idx)
+        {
+            if (broker->connections[conn_idx] && broker->connections[conn_idx]->socket)
+            {
+                close(broker->connections[conn_idx]->socket);
+                broker->connections[conn_idx]->socket = -1;
             }
         }
     }
-    if (transport.socket) {
+    if (transport.socket)
+    {
         close(transport.socket);
     }
     LOGGER_CLEANUP();
-
-}
-
-/**
- * @brief Signal handler for SIGINT (Ctrl+C).
- *
- * Sets the global `running` flag to 0 and closes all client sockets and the
- * listening socket. This triggers the main loop to exit cleanly.
- *
- * @param signal Signal number (unused).
- */
-void broker_cleanup_signal(int signal) {
-    LOG_INFO("Interrupt signal received! Closing broker... singal=%d", signal);
-    broker_cleanup();
 }
 
 /**
@@ -60,22 +50,23 @@ void broker_cleanup_signal(int signal) {
  */
 int main(void)
 {
-    LOGGER_INIT();   // must be called before any LOG_* macro
+    LOGGER_INIT(); // must be called before any LOG_* macro
     LOG_INFO("Broker starting up...");
-    // 1. Initialize the transport layer. Create the server and 
+    // 1. Initialize the transport layer. Create the server and
     //    start listening to new connections
     int listen_port = 8080;
     transport_init(listen_port, 128, &transport);
-    // 2. Setup signal handler to graceful shutdown. 
-    //    Watch CTRL+C signal
-    atexit(broker_cleanup);
-    signal(SIGINT, broker_cleanup_signal);
-    signal(SIGTERM, broker_cleanup_signal);
+    scheduler_broker_task_t broker = {.connections = {NULL},
+                                      .running = true,
+                                      .protocol = STOMP};
 
-    // 3. Initialize event watcher and subscribe for transport layer events
+    // 2. Initialize event watcher and subscribe for transport layer events
     event_watch_init(&broker.event_watch);
     event_watch_io_subscribe(&broker.event_watch, transport.socket);
 
+    // 3. Setup signal handler to graceful shutdown.
+    //    Watch CTRL+C signal
+    core_lifecycle_add_shutdown_hookpoint(&broker_cleanup, &broker);
 
     // 6. Initialize coroutines by storing the current contexts in broker context
     // DOC: https://man7.org/linux/man-pages/man2/getcontext.2.html
@@ -85,7 +76,7 @@ int main(void)
 
     // 7. Event loop that looks for I/O events. It should always back to this event loop
     //    if there is read/write block.
-    while (running)
+    while (broker.running)
     {
         // 8. Block until I/O events found.
         //    Than intract over all events
@@ -95,7 +86,7 @@ int main(void)
             // 9. Get the event file descriptor.
             int event_fd = broker.event_watch.events[evt_idx].data.fd;
 
-            // 10. Compare with transport layer socket. 
+            // 10. Compare with transport layer socket.
             if (event_fd == transport.socket)
             {
                 // 11. If there is an event on transport layer, this means a new connection was open.
@@ -104,13 +95,13 @@ int main(void)
                 if (connection)
                 {
                     // 11. Initialize the I/O processor
-                    connection_context_t *conn = async_io_init(&broker, connection);
+                    scheduler_connection_task_t *conn = async_io_init(&broker, connection);
                     if (!conn)
                     {
                         close(connection);
                         continue;
                     }
-                    // 12. Connection is open and the I/O process is configured. 
+                    // 12. Connection is open and the I/O process is configured.
                     //     Subscribe for events on open connection
                     event_watch_io_subscribe(&broker.event_watch, connection);
                 }
@@ -118,7 +109,7 @@ int main(void)
             else
             {
                 // 13. The event is not on transport layer. Maybe in open connection.
-                connection_context_t *conn = broker.connections[event_fd];
+                scheduler_connection_task_t *conn = broker.connections[event_fd];
                 if (!conn || conn->socket == -1)
                 {
                     // 14. Stale event! Close connection!

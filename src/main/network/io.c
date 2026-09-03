@@ -7,14 +7,16 @@
 #include <stdio.h>
 
 #include "core/logger.h"
-#include "async_io.h"
-#include "coroutines.h"
-#include "event_watch.h"
+
+#include "network/io.h"
+#include "network/watcher.h"
+
+#include "scheduler/tasks.h"
 
 /**
  * Internal function. Implements async I/O read-write loop.
  */
-void _async_io_read_write_loop(connection_context_t *conn)
+void _async_io_read_write_loop(scheduler_connection_task_t *conn)
 {
     bool running = true;
     while (running)
@@ -102,12 +104,12 @@ void _async_io_read_write_loop(connection_context_t *conn)
     conn->socket = -1; // tell main that this coroutine is done
 }
 
-connection_context_t *async_io_init(broker_context_t *broker, int socket)
+scheduler_connection_task_t *async_io_init(scheduler_broker_task_t *broker, int socket)
 {
     return coroutines_schedule(socket, broker, (void *)_async_io_read_write_loop);
 }
 
-void async_io_enable(int fd)
+void network_io_async_enable(int fd)
 {
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
 }

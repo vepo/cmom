@@ -3,13 +3,14 @@ noinst_LIBRARIES = libbroker-core.a \
                    libbroker-protocols.a
 
 libbroker_core_a_SOURCES = core/logger.c \
-                           coroutines.c \
-                           async_io.c \
-                           event_watch.c
+                           core/lifecycle.c \
+                           scheduler/tasks.c
 libbroker_core_a_CFLAGS = -I$(top_srcdir)/includes $(LOG4C_CFLAGS) $(AM_CFLAGS)
 
 libbroker_network_a_CFLAGS = -I$(top_srcdir)/includes $(LOG4C_CFLAGS) $(AM_CFLAGS)
-libbroker_network_a_SOURCES = network/transport.c
+libbroker_network_a_SOURCES = network/transport.c \
+                              network/io.c \
+                              network/watcher.c
 
 libbroker_protocols_a_SOURCES = protocols/protocol.c \
                                 protocols/stomp.c
