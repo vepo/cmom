@@ -31,10 +31,12 @@ static void trim_whitespace(char *str)
 {
     // Trim leading
     while (*str == ' ' || *str == '\t')
+    {
         str++;
+    }
     // Trim trailing
     size_t len = strlen(str);
-    while (len > 0 && (str[len - 1] == ' ' || str[len - 1] == '\t'))
+    while (len > 0 && (str[len - 1] == ' ' || str[len - 1] == '\t' || str[len - 1] == '\r'))
     {
         str[len - 1] = '\0';
         len--;
@@ -119,6 +121,18 @@ void _protocols_stomp_process_command(protocol_buffer_t *buffer, protocol_messag
     // Found a newline – complete the command line
     size_t cmd_length = command_end_ptr - data_start; // length excluding newline
     size_t current_len = strlen(current->command);
+
+    if (cmd_length == 0 || (cmd_length == 1 && data_start[0] == '\n' )) {
+        LOG_DEBUG("Heartbeat identified!");
+        memcpy(&current->command, "HEARTBEAT\0", sizeof(char) * 10);
+        current->ready = true;
+        buffer->start += cmd_length + 1;
+        // Prepare next frame
+        current->next_message = _protocols_stomp_message_initialize();
+        *current_ptr = current->next_message;
+        buffer->processing_stage = STOMP_PROCESSING_STATE_COMMAND;
+        return;
+    }
 
     // Check overflow (including null terminator)
     if (current_len + cmd_length >= sizeof(current->command))
@@ -360,20 +374,6 @@ void _protocols_stomp_process_body(protocol_buffer_t *buffer, protocol_message_t
         // Advance buffer start past the null byte (and any trailing \r or \n)
         size_t consume = null_offset + 1; // skip the null
         buffer->start += consume;
-        // Optional: skip one CR or LF if present (common after null)
-        if (buffer->start < buffer->end &&
-            (buffer->buffer[buffer->start] == '\r' || buffer->buffer[buffer->start] == '\n'))
-        {
-            buffer->start++;
-            // If CRLF, skip LF as well
-            if (buffer->start < buffer->end &&
-                buffer->buffer[buffer->start - 1] == '\r' &&
-                buffer->buffer[buffer->start] == '\n')
-            {
-                buffer->start++;
-            }
-        }
-
         // Prepare next frame
         current->next_message = _protocols_stomp_message_initialize();
         *current_ptr = current->next_message;
