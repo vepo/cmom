@@ -1,13 +1,16 @@
-#include "coroutines.h"
+#include "scheduler/tasks.h"
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
-connection_context_t *coroutines_schedule(int socket, broker_context_t *broker, void *process_connection_fn)
+#include "protocols/protocol.h"
+
+scheduler_connection_task_t *coroutines_schedule(int socket, scheduler_broker_task_t *broker, void *process_connection_fn)
 {
-    connection_context_t *conn = malloc(sizeof(connection_context_t));
+    scheduler_connection_task_t *conn = malloc(sizeof(scheduler_connection_task_t));
     if (!conn)
     {
         return NULL;
@@ -15,6 +18,7 @@ connection_context_t *coroutines_schedule(int socket, broker_context_t *broker, 
 
     conn->socket = socket;
     conn->broker = broker;
+    protocols_initialize(broker->protocol, &conn->protocol);    
 
     char *stack = malloc(STACK_SIZE);
     if (!stack)
@@ -32,12 +36,12 @@ connection_context_t *coroutines_schedule(int socket, broker_context_t *broker, 
     return conn;
 }
 
-void coroutines_join_connection(connection_context_t *connection)
+void coroutines_join_connection(scheduler_connection_task_t *connection)
 {
     swapcontext(&connection->broker->context, &connection->context);
 }
 
-void coroutines_leave_connection(connection_context_t *connection)
+void coroutines_leave_connection(scheduler_connection_task_t *connection)
 {
     swapcontext(&connection->context, &connection->broker->context);
 }

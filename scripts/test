@@ -1,0 +1,32 @@
+#!/bin/bash
+set -e          # stop on first error
+sudo -v         # cache sudo credentials
+
+RESPONSE=$(mktemp)
+trap "rm -f $RESPONSE" EXIT
+
+rm -rf broker.log broker.err.log make.log make.err.log || true
+
+echo "Building..."
+make clean > make.log 2> make.err.log
+make >> make.log 2>> make.err.log
+
+echo "Starting broker..."
+./src/main/broker > broker.log 2> broker.err.log &
+BROKER_PID=$!
+echo "Broker PID: $BROKER_PID"
+
+echo "Sending STOMP input..."
+sed 's/\\u0000/\x00/g' ./data/stomp.in.txt | nc -w 1 localhost 8080 > "$RESPONSE" &
+NC_PID=$!
+echo "Netcat PID: $NC_PID"
+
+sleep 4   # give it time to finish; consider using a more robust sync mechanism
+
+echo "Killing processes (SIGTERM first)..."
+sudo kill -15 $NC_PID $BROKER_PID 2>/dev/null || true
+sleep 1
+sudo kill -9  $NC_PID $BROKER_PID 2>/dev/null || true
+
+echo "=== Response from server ==="
+cat "$RESPONSE"

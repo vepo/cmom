@@ -1,11 +1,12 @@
-#include "transport.h"
-
-#include "async_io.h"
+#include "network/transport.h"
 
 #include <netinet/ip.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+
+#include "core/logger.h"
+#include "network/io.h"
 
 void transport_init(int port, int max_connection_queue, transport_t *transport)
 {
@@ -27,7 +28,7 @@ void transport_init(int port, int max_connection_queue, transport_t *transport)
                               };
     bind(transport->socket, (struct sockaddr *)&addr, sizeof(addr));
     // 4. Set file descriptor to non_blocking
-    async_io_enable(transport->socket);
+    network_io_async_enable(transport->socket);
     // 5. Mark the socket as passive accepting at most max_connection_queue connections in queue
     // DOC: https://man7.org/linux/man-pages/man2/listen.2.html
     listen(transport->socket, max_connection_queue);
@@ -47,7 +48,7 @@ int transport_start_connection(transport_t *transport)
         return -1;
     }
     // 2. Set the new connection as async
-    async_io_enable(connection);
-    printf("New connection: %d\n", connection);
+    network_io_async_enable(connection);
+    LOG_DEBUG("New connection: %d", connection);
     return connection;
 }

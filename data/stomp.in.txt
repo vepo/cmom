@@ -1,0 +1,15 @@
+MESSAGE
+destination:/topic/test
+message-id:1234
+content-type:text/plain
+
+Hello, World!
+\u0000
+
+MESSAGE
+destination:/topic/test-2
+message-id:1235
+content-type:text/plain
+
+Hello, World! 2
+\u0000

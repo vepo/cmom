@@ -5,7 +5,7 @@ WORKDIR /app
 ADD . /app
 ## Install dependencies
 RUN apt update
-RUN apt install -y autoconf automake libtool make gcc
+RUN apt install -y autoconf automake libtool make gcc libcunit1-dev liblog4c-dev
 
 RUN autoreconf --install
 RUN ./configure

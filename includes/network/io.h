@@ -1,7 +1,7 @@
-#ifndef ASYNC_IO_H
-#define ASYNC_IO_H
+#ifndef NETWORK_IO_H
+#define NETWORK_IO_H
 
-#include "coroutines.h"
+#include "scheduler/tasks.h"
 
 /**
  * @brief Enable non‑blocking I/O on a file descriptor.
@@ -11,7 +11,7 @@
  *
  * @param fd File descriptor to make non‑blocking.
  */
-void async_io_enable(int fd);
+void network_io_async_enable(int fd);
 
 /**
  * @brief Spawn a new coroutine for asynchronous I/O on a client socket.
@@ -23,8 +23,8 @@ void async_io_enable(int fd);
  * @param broker The broker context (holds the main context and connection table).
  * @param socket The client socket (already accepted and made non‑blocking).
  *
- * @return Pointer to the newly created connection_context_t, or NULL on allocation failure.
+ * @return Pointer to the newly created scheduler_connection_task_t, or NULL on allocation failure.
  */
-connection_context_t *async_io_init(broker_context_t* broker, int socket);
+scheduler_connection_task_t *async_io_init(scheduler_broker_task_t* broker, int socket);
 
-#endif
+#endif /* NETWORK_IO_H */

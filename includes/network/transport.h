@@ -1,5 +1,5 @@
-#ifndef TRANSPORT_H
-#define TRANSPORT_H
+#ifndef NETWORK_TRANSPORT_H
+#define NETWORK_TRANSPORT_H
 
 /**
  * @brief Transport layer context holding the listening socket.
@@ -24,7 +24,7 @@ void transport_init(int port, int max_connection_queue, transport_t *transport);
  * @brief Accept an incoming client connection.
  *
  * Calls accept(2) on the listening socket. The new socket is automatically
- * set to non‑blocking mode via async_io_enable().
+ * set to non‑blocking mode via network_io_async_enable().
  *
  * @param transport  The transport context.
  *
@@ -32,4 +32,4 @@ void transport_init(int port, int max_connection_queue, transport_t *transport);
  */
 int transport_start_connection(transport_t *transport);
 
-#endif
+#endif /* NETWORK_TRANSPORT_H */
