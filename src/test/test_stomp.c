@@ -5,9 +5,9 @@
 #include "core/logger.h"
 #include "protocols/protocol.h"
 
-static void assert_message_equal(protocol_message_t *expected, protocol_message_t *actual)
+static void assert_message_equal(protocol_request_t *expected, protocol_request_t *actual)
 {
-    CU_ASSERT_EQUAL_FATAL(0, strcmp(expected->command, actual->command));
+    CU_ASSERT_EQUAL_FATAL(expected->command, actual->command);
     // assert headers
     if (expected->headers != NULL)
     {
@@ -42,9 +42,9 @@ static void assert_message_equal(protocol_message_t *expected, protocol_message_
     CU_ASSERT_EQUAL_FATAL(expected->ready, actual->ready);
 }
 
-static void add_message_header(protocol_message_t *msg, char *key, char *value)
+static void add_message_header(protocol_request_t *req, char *key, char *value)
 {
-    protocol_header_t *last_header = msg->headers;
+    protocol_header_t *last_header = req->headers;
     while (last_header != NULL && last_header->next_header != NULL)
     {
         last_header = last_header->next_header;
@@ -55,7 +55,7 @@ static void add_message_header(protocol_message_t *msg, char *key, char *value)
     current_header->next_header = NULL;
     if (last_header == NULL)
     {
-        msg->headers = current_header;
+        req->headers = current_header;
     }
     else
     {
@@ -76,7 +76,7 @@ size_t track_end_of_message(unsigned char *msg)
 static void reset_buffer_with_data(protocol_buffer_t *buffer, unsigned char *msg)
 {
     buffer->start = 0;
-    memcpy(buffer->buffer, msg, buffer->end = track_end_of_message(msg));
+    memcpy(buffer->input_buffer, msg, buffer->end = track_end_of_message(msg));
 }
 
 static void test_parse_simple_message(void)
@@ -84,15 +84,15 @@ static void test_parse_simple_message(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
     reset_buffer_with_data(&buffer, "MESSAGE\ndestination:/topic/test\nmessage-id:1234\ncontent-type:text/plain\n\nHello, World!\n\0EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message = {.command = "MESSAGE",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message = {.command = MESSAGE,
                                            .headers = NULL,
                                            .body = (char *)&"Hello, World!\n",
                                            .body_len = 14,
@@ -101,7 +101,7 @@ static void test_parse_simple_message(void)
     add_message_header(&expected_message, "destination", "/topic/test");
     add_message_header(&expected_message, "message-id", "1234");
     add_message_header(&expected_message, "content-type", "text/plain");
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 }
 
 static void test_parse_message_with_cr(void)
@@ -109,15 +109,15 @@ static void test_parse_message_with_cr(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
     reset_buffer_with_data(&buffer, "MESSAGE\r\ndestination:/topic/test\r\nmessage-id:1234\r\ncontent-type:text/plain\r\n\r\nHello, World!\r\n\0EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message = {.command = "MESSAGE",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message = {.command = MESSAGE,
                                            .headers = NULL,
                                            .body = (char *)&"Hello, World!\r\n",
                                            .body_len = 15,
@@ -126,7 +126,7 @@ static void test_parse_message_with_cr(void)
     add_message_header(&expected_message, "destination", "/topic/test");
     add_message_header(&expected_message, "message-id", "1234");
     add_message_header(&expected_message, "content-type", "text/plain");
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 }
 
 static void test_parse_multiple_messages(void)
@@ -134,15 +134,15 @@ static void test_parse_multiple_messages(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
     reset_buffer_with_data(&buffer, "CONNECT\naccept-version:1.2\nhost:stomp.github.org\n\n\0SUBSCRIBE\nid:0\ndestination:/queue/foo\nack:client\n\n\0EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message_1 = {.command = "CONNECT",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message_1 = {.command = CONNECT,
                                              .headers = NULL,
                                              .body = NULL,
                                              .body_len = 0,
@@ -150,9 +150,9 @@ static void test_parse_multiple_messages(void)
                                              .ready = true};
     add_message_header(&expected_message_1, "accept-version", "1.2");
     add_message_header(&expected_message_1, "host", "stomp.github.org");
-    assert_message_equal(&expected_message_1, buffer.messages);
+    assert_message_equal(&expected_message_1, buffer.requests);
 
-    protocol_message_t expected_message_2 = {.command = "SUBSCRIBE",
+    protocol_request_t expected_message_2 = {.command = SUBSCRIBE,
                                              .headers = NULL,
                                              .body = NULL,
                                              .body_len = 0,
@@ -161,7 +161,7 @@ static void test_parse_multiple_messages(void)
     add_message_header(&expected_message_2, "id", "0");
     add_message_header(&expected_message_2, "destination", "/queue/foo");
     add_message_header(&expected_message_2, "ack", "client");
-    assert_message_equal(&expected_message_2, buffer.messages->next_message);
+    assert_message_equal(&expected_message_2, buffer.requests->next_request);
 }
 
 static void test_parse_multiple_messages_with_heartbeat(void)
@@ -169,15 +169,15 @@ static void test_parse_multiple_messages_with_heartbeat(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
     reset_buffer_with_data(&buffer, "CONNECT\naccept-version:1.2\nhost:stomp.github.org\n\n\0\nSUBSCRIBE\nid:0\ndestination:/queue/foo\nack:client\n\n\0EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message_1 = {.command = "CONNECT",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message_1 = {.command = CONNECT,
                                              .headers = NULL,
                                              .body = NULL,
                                              .body_len = 0,
@@ -185,18 +185,17 @@ static void test_parse_multiple_messages_with_heartbeat(void)
                                              .ready = true};
     add_message_header(&expected_message_1, "accept-version", "1.2");
     add_message_header(&expected_message_1, "host", "stomp.github.org");
-    assert_message_equal(&expected_message_1, buffer.messages);
+    assert_message_equal(&expected_message_1, buffer.requests);
 
-
-    protocol_message_t expected_message_2 = {.command = "HEARTBEAT",
+    protocol_request_t expected_message_2 = {.command = HEARTBEAT,
                                              .headers = NULL,
                                              .body = NULL,
                                              .body_len = 0,
                                              .body_received = 0,
                                              .ready = true};
-    assert_message_equal(&expected_message_2, buffer.messages->next_message);
+    assert_message_equal(&expected_message_2, buffer.requests->next_request);
 
-    protocol_message_t expected_message_3 = {.command = "SUBSCRIBE",
+    protocol_request_t expected_message_3 = {.command = SUBSCRIBE,
                                              .headers = NULL,
                                              .body = NULL,
                                              .body_len = 0,
@@ -205,7 +204,7 @@ static void test_parse_multiple_messages_with_heartbeat(void)
     add_message_header(&expected_message_3, "id", "0");
     add_message_header(&expected_message_3, "destination", "/queue/foo");
     add_message_header(&expected_message_3, "ack", "client");
-    assert_message_equal(&expected_message_3, buffer.messages->next_message->next_message);
+    assert_message_equal(&expected_message_3, buffer.requests->next_request->next_request);
 }
 
 static void test_content_length_chunked(void)
@@ -214,21 +213,21 @@ static void test_content_length_chunked(void)
     protocols_initialize(STOMP, &buffer);
     // Send command + headers
     reset_buffer_with_data(&buffer, "MESSAGE\ncontent-length:6\n\nEOM");
-    protocols_process(STOMP, &buffer);
+    protocols_consume_input_buffer(STOMP, &buffer);
     // Expect incomplete (body not ready)
-    CU_ASSERT_FALSE(buffer.messages->ready);
+    CU_ASSERT_FALSE(buffer.requests->ready);
 
     // Send first 3 bytes of body
     reset_buffer_with_data(&buffer, "HelEOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_EQUAL(buffer.messages->body_received, 3);
-    CU_ASSERT_FALSE(buffer.messages->ready);
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_EQUAL(buffer.requests->body_received, 3);
+    CU_ASSERT_FALSE(buffer.requests->ready);
 
     // Send remaining 3 bytes
     reset_buffer_with_data(&buffer, "lo!EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_TRUE(buffer.messages->ready);
-    CU_ASSERT_STRING_EQUAL(buffer.messages->body, "Hello!");
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_TRUE(buffer.requests->ready);
+    CU_ASSERT_STRING_EQUAL(buffer.requests->body, "Hello!");
 }
 
 static void test_parse_message_with_content_length_and_nulls_value(void)
@@ -236,8 +235,8 @@ static void test_parse_message_with_content_length_and_nulls_value(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
@@ -252,9 +251,9 @@ static void test_parse_message_with_content_length_and_nulls_value(void)
                                     "4"
                                     "\0"
                                     "5EOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message = {.command = "MESSAGE",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message = {.command = MESSAGE,
                                            .headers = NULL,
                                            .body = (unsigned char *)&"\0"
                                                                      "1"
@@ -273,7 +272,7 @@ static void test_parse_message_with_content_length_and_nulls_value(void)
     add_message_header(&expected_message, "message-id", "1234");
     add_message_header(&expected_message, "content-length", "10");
     add_message_header(&expected_message, "content-type", "text/plain");
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 }
 
 static void test_parse_simple_message_sent_in_chunks(void)
@@ -281,47 +280,47 @@ static void test_parse_simple_message_sent_in_chunks(void)
     protocol_buffer_t buffer;
     protocols_initialize(STOMP, &buffer);
     CU_ASSERT_PTR_NOT_NULL_FATAL(&buffer);
-    CU_ASSERT_PTR_NULL_FATAL(buffer.messages);
-    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.buffer));
+    CU_ASSERT_PTR_NULL_FATAL(buffer.requests);
+    CU_ASSERT_EQUAL_FATAL(0, strlen(buffer.input_buffer));
     CU_ASSERT_EQUAL_FATAL(0, buffer.start);
     CU_ASSERT_EQUAL_FATAL(0, buffer.end);
 
     reset_buffer_with_data(&buffer, "MESSAGE\nEOM");
-    protocols_process(STOMP, &buffer);
-    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.messages);
-    protocol_message_t expected_message = {.command = "MESSAGE",
+    protocols_consume_input_buffer(STOMP, &buffer);
+    CU_ASSERT_PTR_NOT_NULL_FATAL(buffer.requests);
+    protocol_request_t expected_message = {.command = MESSAGE,
                                            .headers = NULL,
                                            .body = NULL,
                                            .body_len = 0,
                                            .body_received = 0,
                                            .ready = false};
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 
     reset_buffer_with_data(&buffer, "destination:/topic/test\nmessage-id:1234\nEOM");
-    protocols_process(STOMP, &buffer);
+    protocols_consume_input_buffer(STOMP, &buffer);
     add_message_header(&expected_message, "destination", "/topic/test");
     add_message_header(&expected_message, "message-id", "1234");
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 
     reset_buffer_with_data(&buffer, "content-type:text/plain\n\nEOM");
-    protocols_process(STOMP, &buffer);
+    protocols_consume_input_buffer(STOMP, &buffer);
     add_message_header(&expected_message, "content-type", "text/plain");
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 
     reset_buffer_with_data(&buffer, "Hello, World!\nEOM");
-    protocols_process(STOMP, &buffer);
+    protocols_consume_input_buffer(STOMP, &buffer);
     expected_message.body = "Hello, World!\n";
     expected_message.body_len = 14;
     expected_message.body_received = 14;
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 
     reset_buffer_with_data(&buffer, "\0EOM");
-    protocols_process(STOMP, &buffer);
+    protocols_consume_input_buffer(STOMP, &buffer);
     expected_message.body = "Hello, World!\n";
     expected_message.body_len = 14;
     expected_message.body_received = 14;
     expected_message.ready = true;
-    assert_message_equal(&expected_message, buffer.messages);
+    assert_message_equal(&expected_message, buffer.requests);
 }
 
 int main(void)

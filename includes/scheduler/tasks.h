@@ -29,7 +29,7 @@ typedef struct scheduler_broker_task
     ucontext_t context;                                        /**< Main coroutine context (event loop). */
     scheduler_connection_task_t *connections[MAX_CONNECTIONS]; /**< Map fd -> connection_context. */
     event_watch_t event_watch;                                 /**< epoll instance and event array. */
-    protocol_e protocol;
+    protocol_t protocol;
     volatile bool running;
 } scheduler_broker_task_t;
 

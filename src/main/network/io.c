@@ -24,10 +24,10 @@ void _async_io_read_write_loop(scheduler_connection_task_t *conn)
         // 1. All read/write are async, so read never blocks.
         //    If not data is available, it should return 0, EWOULDBLOCK or EAGAIN
         ssize_t bytes_read;
-        LOG_DEBUG("Reading current buffer \n\"\"\"\n%s\n\"\"\"\n", conn->protocol.buffer);
+        LOG_DEBUG("Reading current buffer \n\"\"\"\n%s\n\"\"\"\n", conn->protocol.input_buffer);
         while ((bytes_read = read(conn->socket,
-                                  &conn->protocol.buffer[conn->protocol.end],
-                                  sizeof(conn->protocol.buffer) - conn->protocol.start)) < 0)
+                                  &conn->protocol.input_buffer[conn->protocol.end],
+                                  sizeof(conn->protocol.input_buffer) - conn->protocol.start)) < 0)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
             {
@@ -60,36 +60,44 @@ void _async_io_read_write_loop(scheduler_connection_task_t *conn)
         if (running)
         {
             // 5. All read/write are async. The write will not block
-            LOG_DEBUG("Data Received: %.*s", (int)bytes_read, conn->protocol.buffer);
-            protocols_process(conn->broker->protocol, &conn->protocol);
-            size_t bytes_written_committed = 0;
-            while (bytes_written_committed < bytes_read)
+            LOG_DEBUG("Data Received: %.*s", (int)bytes_read, conn->protocol.input_buffer);
+            protocols_consume_input_buffer(conn->broker->protocol, &conn->protocol);
+            protocol_response_t *response = NULL;
+            while (response != NULL)
             {
-                ssize_t bytes_written = write(conn->socket, conn->protocol.buffer + bytes_written_committed, bytes_read - bytes_written_committed);
-                if (bytes_written < 0)
+                size_t bytes_written_committed = 0;
+                while (bytes_written_committed < response->length)
                 {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    ssize_t bytes_written = write(conn->socket, response->content + bytes_written_committed, response->length - bytes_written_committed);
+                    if (bytes_written < 0)
                     {
-                        // 6. Socket is not available for now. Leave the contexts to main broker.
-                        //    And wait for read events.
-                        LOG_DEBUG("Connection not ready for write! Leaving context...");
-                        event_watch_io_wait_write(&conn->broker->event_watch, conn->socket);
-                        coroutines_leave_connection(conn);
+                        if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        {
+                            // 6. Socket is not available for now. Leave the contexts to main broker.
+                            //    And wait for read events.
+                            LOG_DEBUG("Connection not ready for write! Leaving context...");
+                            event_watch_io_wait_write(&conn->broker->event_watch, conn->socket);
+                            coroutines_leave_connection(conn);
+                        }
+                        else
+                        {
+                            // 7. Some other error. Close the socket!
+                            LOG_ERROR("Error writting socket! %d", errno);
+                            running = false;
+                            break;
+                        }
                     }
                     else
                     {
-                        // 7. Some other error. Close the socket!
-                        LOG_ERROR("Error writting socket! %d", errno);
-                        running = false;
-                        break;
+                        // 8. Write was a successful operation. Commit the bytes and loop again to check if any
+                        //    bytes were missing to flush.
+                        bytes_written_committed += bytes_written;
                     }
                 }
-                else
-                {
-                    // 8. Write was a successful operation. Commit the bytes and loop again to check if any
-                    //    bytes were missing to flush.
-                    bytes_written_committed += bytes_written;
-                }
+
+                protocol_response_t *sent_response = response;
+                response = response->next;
+                protocols_response_release(sent_response);
             }
         }
 
