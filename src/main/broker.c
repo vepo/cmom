@@ -7,9 +7,12 @@
 
 #include "core/logger.h"
 #include "core/lifecycle.h"
+
 #include "network/watcher.h"
 #include "network/transport.h"
 #include "network/io.h"
+
+#include "storage/engine.h"
 
 #include "scheduler/tasks.h"
 
@@ -52,6 +55,9 @@ int main(void)
 {
     LOGGER_INIT(); // must be called before any LOG_* macro
     LOG_INFO("Broker starting up...");
+
+    storage_engine_init("./storage");
+
     // 1. Initialize the transport layer. Create the server and
     //    start listening to new connections
     int listen_port = 8080;

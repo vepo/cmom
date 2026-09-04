@@ -1,16 +1,12 @@
-if HAVE_CUNIT
+AM_CPPFLAGS = -I$(top_srcdir)/includes 
 
-AM_CFLAGS = -g -O0
-check_PROGRAMS = test_suite
-test_suite_SOURCES = test_stomp.c
-test_suite_CFLAGS = -I$(top_srcdir)/includes $(CUNIT_CFLAGS)
+TESTS = check_broker
+check_PROGRAMS = check_broker
 
-# Option A: Reorder libraries (simplest if no circular deps)
-test_suite_LDADD = $(top_builddir)/src/main/libbroker-protocols.a \
-                   $(top_builddir)/src/main/libbroker-core.a \
-                   $(LOG4C_LIBS) \
-                   $(CUNIT_LIBS)
+check_broker_SOURCES = stomp.c
 
-TESTS = $(check_PROGRAMS)
-
-endif
+check_broker_CFLAGS = @CHECK_CFLAGS@
+check_broker_LDADD = $(top_builddir)/src/main/libbroker-protocols.a \
+                     $(top_builddir)/src/main/libbroker-core.a \
+                     $(LOG4C_LIBS) \
+                     @CHECK_LIBS@

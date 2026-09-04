@@ -17,14 +17,7 @@ AC_CHECK_HEADERS([stdlib.h string.h ucontext.h])
 AC_PROG_RANLIB
 AC_CHECK_FUNCS([strdup])
 
-# Check for CUnit (testing framework)
-PKG_CHECK_MODULES([CUNIT], [cunit],
-                  [have_cunit=yes],
-                  [have_cunit=no])
-AM_CONDITIONAL([HAVE_CUNIT], [test "x$have_cunit" = "xyes"])
-if test "x$have_cunit" = "xyes"; then
-    AC_DEFINE([HAVE_CUNIT], [1], [Define if CUnit is available])
-fi
+PKG_CHECK_MODULES([CHECK], [check])
 
 # Check for log4c (logging library)
 PKG_CHECK_MODULES([LOG4C], [log4c], [have_log4c=yes], [have_log4c=no])
