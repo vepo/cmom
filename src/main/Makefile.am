@@ -5,6 +5,7 @@ noinst_LIBRARIES = libbroker-core.a \
 
 libbroker_core_a_SOURCES = core/logger.c \
                            core/lifecycle.c \
+                           core/properties.c \
                            scheduler/tasks.c
 libbroker_core_a_CFLAGS = -I$(top_srcdir)/includes $(LOG4C_CFLAGS) $(AM_CFLAGS)
 

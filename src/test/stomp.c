@@ -1,5 +1,4 @@
 #include <check.h>
-#include <stdio.h>
 
 #include "core/logger.h"
 #include "protocols/protocol.h"
@@ -345,7 +344,7 @@ int main(void)
     int number_failed;
     Suite *s = protocols_stomp_test_suite();
     SRunner *sr = srunner_create(s);
-    srunner_set_log(sr, "broker-tests.log");
+    srunner_set_log(sr, "tests-protocols-stomp.log");
     srunner_run_all(sr, CK_VERBOSE);
     number_failed = srunner_ntests_failed(sr);
     srunner_free(sr);
